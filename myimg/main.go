@@ -3,11 +3,14 @@ package myimg
 import (
 	"appengine"
 	"appengine/blobstore"
-	// "appengine/datastore"
+	"appengine/datastore"
 	"appengine/user"
+	"crypto/md5"
+	"fmt"
 	"html/template"
 	"io"
 	"net/http"
+	"path"
 	"time"
 )
 
@@ -116,6 +119,10 @@ type servePic struct {
 	PicKey string
 }
 
+type shortened struct {
+	Long string
+}
+
 func pic(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	uploadURL, err := blobstore.UploadURL(c, "/upload", nil)
@@ -123,8 +130,16 @@ func pic(w http.ResponseWriter, r *http.Request) {
 		serveError(c, w, err)
 		return
 	}
-	key := r.FormValue("blobKey")
-	p := servePic{uploadURL.String(), key}
+	u := r.URL.String()
+	_, picName := path.Split(u)
+	k := datastore.NewKey(c, "string", picName, 0, nil)
+	short := shortened{}
+	if err := datastore.Get(c, k, &short); err != nil {
+		http.Error(w, "Getting from the datastore: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	//	key := r.FormValue("blobKey")
+	p := servePic{uploadURL.String(), short.Long}
 	w.Header().Set("Content-Type", "text/html")
 	if err := picTemplate.Execute(w, p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -144,5 +159,19 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	http.Redirect(w, r, "/pic/?blobKey="+string(file[0].BlobKey), http.StatusFound)
+	long := string(file[0].BlobKey)
+	h := md5.New()
+	_, err = io.WriteString(h, long)
+	if err != nil {
+		serveError(c, w, err)
+	}
+	short := fmt.Sprintf("%x", h.Sum(nil))
+	_, err = datastore.Put(c, datastore.NewKey(c, "string", short, 0, nil), &shortened{long})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	//	http.Redirect(w, r, "/pic/?blobKey="+string(file[0].BlobKey), http.StatusFound)
+	http.Redirect(w, r, "/pic/"+short, http.StatusFound)
 }
