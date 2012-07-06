@@ -20,6 +20,7 @@ func init() {
 	http.HandleFunc("/pic/", pic)
 	http.HandleFunc("/serve/", serve)
 	http.HandleFunc("/upload", upload)
+	http.HandleFunc("/pics", allPics)
 }
 
 func serveError(c appengine.Context, w http.ResponseWriter, err error) {
@@ -119,7 +120,7 @@ type servePic struct {
 	PicKey string
 }
 
-type shortened struct {
+type shortTo struct {
 	Long string
 }
 
@@ -132,8 +133,8 @@ func pic(w http.ResponseWriter, r *http.Request) {
 	}
 	u := r.URL.String()
 	_, picName := path.Split(u)
-	k := datastore.NewKey(c, "string", picName, 0, nil)
-	short := shortened{}
+	k := datastore.NewKey(c, "shortKey", picName, 0, nil)
+	short := shortTo{}
 	if err := datastore.Get(c, k, &short); err != nil {
 		http.Error(w, "Getting from the datastore: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -166,7 +167,7 @@ func upload(w http.ResponseWriter, r *http.Request) {
 		serveError(c, w, err)
 	}
 	short := fmt.Sprintf("%x", h.Sum(nil))
-	_, err = datastore.Put(c, datastore.NewKey(c, "string", short, 0, nil), &shortened{long})
+	_, err = datastore.Put(c, datastore.NewKey(c, "shortKey", short, 0, nil), &shortTo{long})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -175,3 +176,40 @@ func upload(w http.ResponseWriter, r *http.Request) {
 	//	http.Redirect(w, r, "/pic/?blobKey="+string(file[0].BlobKey), http.StatusFound)
 	http.Redirect(w, r, "/pic/"+short, http.StatusFound)
 }
+
+var picsTemplate = template.Must(template.New("pics").Parse(picsHTML))
+
+const picsHTML = `
+<!DOCTYPE html>
+<html>
+<head>
+	<title>ImgDump</title>
+</head>
+<body>
+	<div><a href="/">home</a></div>
+	<ul>
+	{{range .}} <li> <a href="pic/{{.}}"> {{.}} </li> {{end}}
+	</ul>
+</body>
+</html>
+`
+
+func allPics(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	q := datastore.NewQuery("shortKey").Limit(10)
+	longs := make([]shortTo, 0, 10)
+	keys, err := q.GetAll(c, &longs)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	shorts := make([]string, 0, 1)
+	for _,v := range keys {
+		shorts = append(shorts, v.StringID())
+	}
+	
+	if err := picsTemplate.Execute(w, shorts); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+    }
+}
+
