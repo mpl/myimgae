@@ -16,7 +16,7 @@ import (
 
 func init() {
 	http.HandleFunc("/", root)
-	// http.HandleFunc("/login", login)
+	http.HandleFunc("/login", login)
 	http.HandleFunc("/pic/", pic)
 	http.HandleFunc("/serve/", serve)
 	http.HandleFunc("/upload", upload)
@@ -38,6 +38,7 @@ type Pic struct {
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
+	println(r.URL.String())
 	c := appengine.NewContext(r)
 	u := user.Current(c)
 	if u == nil {
@@ -50,7 +51,9 @@ func login(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusFound)
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusFound)
+	if r.URL.String() == "/login" {
+		http.Redirect(w, r, "/", http.StatusFound)
+	}
 }
 
 var rootTemplate = template.Must(template.New("root").Parse(rootHTML))
@@ -62,10 +65,9 @@ const rootHTML = `
 	<title>ImgDump</title>
 </head>
 <body>
+	<div><a href="/login">login</a></div>
 	<div><a href="/">home</a></div>
-<!--
-	<a href="/login">login</a>
--->
+	<div><a href="/pics">list</a></div>
 	<form action="{{.}}" method="post" enctype="multipart/form-data">
 	<div><input type="file" name="file"></div>
 	<div><input type="submit" value="upload"></div>
@@ -100,13 +102,10 @@ const picHTML = `
 	<title>ImgDump</title>
 </head>
 <body>
-	<div><a href="/">home</a></div>
-<!--
 	<div><a href="/login">login</a></div>
--->
-
+	<div><a href="/">home</a></div>
+	<div><a href="/pics">list</a></div>
 	<div><img src="/serve/?blobKey={{.PicKey}}" alt="{{.PicKey}}"/></div>
-
 	<form action="{{.Upload}}" method="post" enctype="multipart/form-data">
 	<div><input type="file" name="file"></div>
 	<div><input type="submit" value="upload"></div>
@@ -195,6 +194,7 @@ const picsHTML = `
 `
 
 func allPics(w http.ResponseWriter, r *http.Request) {
+	login(w, r)
 	c := appengine.NewContext(r)
 	q := datastore.NewQuery("shortKey").Limit(10)
 	longs := make([]shortTo, 0, 10)
