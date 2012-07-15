@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"strings"
 	"time"
 )
 
@@ -38,8 +39,8 @@ type Pic struct {
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
-	println(r.URL.String())
 	c := appengine.NewContext(r)
+//	c.Debugf("URL String: %v", r.URL.String())
 	u := user.Current(c)
 	if u == nil {
 		url, err := user.LoginURL(c, r.URL.String())
@@ -51,7 +52,9 @@ func login(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusFound)
 		return
 	}
-	if r.URL.String() == "/login" {
+//	c.Debugf("already logged in")
+	if strings.HasSuffix(r.URL.String(), "/login") {
+//		c.Debugf("should now redirect to /")
 		http.Redirect(w, r, "/", http.StatusFound)
 	}
 }
@@ -150,7 +153,9 @@ func upload(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	blobs, _, err := blobstore.ParseUpload(r)
 	if err != nil {
-		serveError(c, w, err)
+		c.Errorf("upload: %v", err)
+		//serveError(c, w, err)
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 	file := blobs["file"]
@@ -163,12 +168,17 @@ func upload(w http.ResponseWriter, r *http.Request) {
 	h := md5.New()
 	_, err = io.WriteString(h, long)
 	if err != nil {
-		serveError(c, w, err)
+//		serveError(c, w, err)
+		c.Errorf("upload: %v", err)
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
 	}
 	short := fmt.Sprintf("%x", h.Sum(nil))
 	_, err = datastore.Put(c, datastore.NewKey(c, "shortKey", short, 0, nil), &shortTo{long})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+//		serveError(c, w, err)
+		c.Errorf("upload: %v", err)
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 
