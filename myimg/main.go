@@ -11,13 +11,13 @@ import (
 	"io"
 	"net/http"
 	"path"
-	"strings"
 	"time"
 )
 
 func init() {
 	http.HandleFunc("/", root)
 	http.HandleFunc("/login", login)
+	http.HandleFunc("/logout", logout)
 	http.HandleFunc("/pic/", pic)
 	http.HandleFunc("/serve/", serve)
 	http.HandleFunc("/upload", upload)
@@ -39,8 +39,8 @@ type Pic struct {
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
+//	println(r.URL.String())
 	c := appengine.NewContext(r)
-//	c.Debugf("URL String: %v", r.URL.String())
 	u := user.Current(c)
 	if u == nil {
 		url, err := user.LoginURL(c, r.URL.String())
@@ -52,9 +52,25 @@ func login(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusFound)
 		return
 	}
-//	c.Debugf("already logged in")
-	if strings.HasSuffix(r.URL.String(), "/login") {
-//		c.Debugf("should now redirect to /")
+	if r.URL.String() == "/login" {
+		http.Redirect(w, r, "/", http.StatusFound)
+	}
+}
+
+func logout(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	u := user.Current(c)
+	if u != nil {
+		url, err := user.LogoutURL(c, r.URL.String())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Location", url)
+		w.WriteHeader(http.StatusFound)
+		return
+	}
+	if r.URL.String() == "/logout" {
 		http.Redirect(w, r, "/", http.StatusFound)
 	}
 }
@@ -69,6 +85,7 @@ const rootHTML = `
 </head>
 <body>
 	<div><a href="/login">login</a></div>
+	<div><a href="/logout">logout</a></div>
 	<div><a href="/">home</a></div>
 	<div><a href="/pics">list</a></div>
 	<form action="{{.}}" method="post" enctype="multipart/form-data">
@@ -106,6 +123,7 @@ const picHTML = `
 </head>
 <body>
 	<div><a href="/login">login</a></div>
+	<div><a href="/logout">logout</a></div>
 	<div><a href="/">home</a></div>
 	<div><a href="/pics">list</a></div>
 	<div><img src="/serve/?blobKey={{.PicKey}}" alt="{{.PicKey}}"/></div>
@@ -122,8 +140,9 @@ type servePic struct {
 	PicKey string
 }
 
-type shortTo struct {
-	Long string
+type shortToLong struct {
+	Owner string
+	Hash string
 }
 
 func pic(w http.ResponseWriter, r *http.Request) {
@@ -136,13 +155,13 @@ func pic(w http.ResponseWriter, r *http.Request) {
 	u := r.URL.String()
 	_, picName := path.Split(u)
 	k := datastore.NewKey(c, "shortKey", picName, 0, nil)
-	short := shortTo{}
+	short := shortToLong{}
 	if err := datastore.Get(c, k, &short); err != nil {
 		http.Error(w, "Getting from the datastore: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	//	key := r.FormValue("blobKey")
-	p := servePic{uploadURL.String(), short.Long}
+	p := servePic{uploadURL.String(), short.Hash}
 	w.Header().Set("Content-Type", "text/html")
 	if err := picTemplate.Execute(w, p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -150,12 +169,12 @@ func pic(w http.ResponseWriter, r *http.Request) {
 }
 
 func upload(w http.ResponseWriter, r *http.Request) {
+	login(w, r)
 	c := appengine.NewContext(r)
+	u := user.Current(c)
 	blobs, _, err := blobstore.ParseUpload(r)
 	if err != nil {
-		c.Errorf("upload: %v", err)
-		//serveError(c, w, err)
-		http.Redirect(w, r, "/", http.StatusFound)
+		serveError(c, w, err)
 		return
 	}
 	file := blobs["file"]
@@ -168,17 +187,12 @@ func upload(w http.ResponseWriter, r *http.Request) {
 	h := md5.New()
 	_, err = io.WriteString(h, long)
 	if err != nil {
-//		serveError(c, w, err)
-		c.Errorf("upload: %v", err)
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
+		serveError(c, w, err)
 	}
 	short := fmt.Sprintf("%x", h.Sum(nil))
-	_, err = datastore.Put(c, datastore.NewKey(c, "shortKey", short, 0, nil), &shortTo{long})
+	_, err = datastore.Put(c, datastore.NewKey(c, "shortKey", short, 0, nil), &shortToLong{u.String(), long})
 	if err != nil {
-//		serveError(c, w, err)
-		c.Errorf("upload: %v", err)
-		http.Redirect(w, r, "/", http.StatusFound)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -206,8 +220,10 @@ const picsHTML = `
 func allPics(w http.ResponseWriter, r *http.Request) {
 	login(w, r)
 	c := appengine.NewContext(r)
-	q := datastore.NewQuery("shortKey").Limit(10)
-	longs := make([]shortTo, 0, 10)
+	u := user.Current(c)
+//	q := datastore.NewQuery("shortKey").Limit(10)
+	q := datastore.NewQuery("shortKey").Filter("Owner =", u.String())
+	longs := make([]shortToLong, 0, 10)
 	keys, err := q.GetAll(c, &longs)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
