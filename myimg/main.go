@@ -35,6 +35,7 @@ func isAnon(c appengine.Context) bool {
 	return (u == nil) 
 }
 
+// TODO: login and logout don't redirect to "/" when actually running on gae. investigate.
 func login(w http.ResponseWriter, r *http.Request) {
 //	println(r.URL.String())
 	c := appengine.NewContext(r)
