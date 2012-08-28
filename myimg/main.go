@@ -11,12 +11,11 @@ import (
 	"io"
 	"net/http"
 	"path"
-	"time"
 )
 
 func init() {
 	http.HandleFunc("/", root)
-	http.HandleFunc("/login", loginHandler)
+	http.HandleFunc("/login", login)
 	http.HandleFunc("/logout", logout)
 	http.HandleFunc("/pic/", pic)
 	http.HandleFunc("/serve/", serve)
@@ -31,37 +30,28 @@ func serveError(c appengine.Context, w http.ResponseWriter, err error) {
 	c.Errorf("%v", err)
 }
 
-type Pic struct {
-	Author  string
-	Name    string
-	Content []byte
-	Date    time.Time
+func isAnon(c appengine.Context) bool {
+	u := user.Current(c)
+	return (u == nil) 
 }
 
-func loginHandler(w http.ResponseWriter, r *http.Request) {
-	_, err := login(w, r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if r.URL.String() == "/login" {
-		http.Redirect(w, r, "/", http.StatusFound)
-	}
-}
-
-func login(w http.ResponseWriter, r *http.Request) (*user.User, error) {
+func login(w http.ResponseWriter, r *http.Request) {
 //	println(r.URL.String())
 	c := appengine.NewContext(r)
 	u := user.Current(c)
 	if u == nil {
 		url, err := user.LoginURL(c, r.URL.String())
 		if err != nil {
-			return nil, err
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		w.Header().Set("Location", url)
 		w.WriteHeader(http.StatusFound)
+		return
 	}
-	return u, nil
+	if r.URL.String() == "/login" {
+		http.Redirect(w, r, "/", http.StatusFound)
+	}
 }
 
 func logout(w http.ResponseWriter, r *http.Request) {
@@ -91,17 +81,23 @@ const rootHTML = `
 	<title>ImgDump</title>
 </head>
 <body>
-	<div><a href="/login">login</a></div>
-	<div><a href="/logout">logout</a></div>
-	<div><a href="/">home</a></div>
+	{{ if .Anon }}<div> Log in to upload or list your previous uploads </div>{{ end }}
+	<div><a href="/login">login</a> <a href="/logout">logout</a> <a href="/">home</a> </div>
+	{{ if not .Anon }}
 	<div><a href="/pics">list</a></div>
-	<form action="{{.}}" method="post" enctype="multipart/form-data">
+	<form action="{{.UploadURL}}" method="post" enctype="multipart/form-data">
 	<div><input type="file" name="file"></div>
 	<div><input type="submit" value="upload"></div>
     </form>
+	{{ end }}
 </body>
 </html>
 `
+
+type serveRoot struct {
+	UploadURL string
+	Anon bool
+}
 
 func root(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
@@ -111,7 +107,8 @@ func root(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html")
-	if err := rootTemplate.Execute(w, uploadURL); err != nil {
+	served := serveRoot{uploadURL.String(), isAnon(c)}
+	if err := rootTemplate.Execute(w, served); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -129,15 +126,16 @@ const picHTML = `
 	<title>ImgDump</title>
 </head>
 <body>
-	<div><a href="/login">login</a></div>
-	<div><a href="/logout">logout</a></div>
-	<div><a href="/">home</a></div>
-	<div><a href="/pics">list</a></div>
+	{{ if .Anon }}<div> Log in to upload or list your previous uploads </div>{{ end }}
+	<div><a href="/login">login</a> <a href="/logout">logout</a> <a href="/">home</a> </div>
 	<div><img src="/serve/?blobKey={{.PicKey}}" alt="{{.PicKey}}"/></div>
+	{{ if not .Anon }}
+	<div><a href="/pics">list</a></div>
 	<form action="{{.Upload}}" method="post" enctype="multipart/form-data">
 	<div><input type="file" name="file"></div>
 	<div><input type="submit" value="upload"></div>
     </form>
+	{{ end }}
 </body>
 </html>
 `
@@ -145,6 +143,7 @@ const picHTML = `
 type servePic struct {
 	Upload string
 	PicKey string
+	Anon bool
 }
 
 type shortToLong struct {
@@ -168,7 +167,7 @@ func pic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	//	key := r.FormValue("blobKey")
-	p := servePic{uploadURL.String(), short.Hash}
+	p := servePic{uploadURL.String(), short.Hash, isAnon(c)}
 	w.Header().Set("Content-Type", "text/html")
 	if err := picTemplate.Execute(w, p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -176,15 +175,24 @@ func pic(w http.ResponseWriter, r *http.Request) {
 }
 
 func upload(w http.ResponseWriter, r *http.Request) {
-	u, err := login(w, r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	c := appengine.NewContext(r)
+	u := user.Current(c)
+	if u == nil {
+		url, err := user.LoginURL(c, "/")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Location", url)
+		w.WriteHeader(http.StatusFound)
 		return
 	}
-	c := appengine.NewContext(r)
 	blobs, _, err := blobstore.ParseUpload(r)
 	if err != nil {
-		serveError(c, w, err)
+//		serveError(c, w, err)
+		c.Errorf("%v", err)
+		// TODO(mpl): probably not a "StatusFound" that we want here
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 	file := blobs["file"]
@@ -219,7 +227,7 @@ const picsHTML = `
 	<title>ImgDump</title>
 </head>
 <body>
-	<div><a href="/">home</a></div>
+	<div><a href="/login">login</a> <a href="/logout">logout</a> <a href="/">home</a> </div>
 	<ul>
 	{{range .}} <li> <a href="pic/{{.}}"> {{.}} </li> {{end}}
 	</ul>
@@ -228,12 +236,18 @@ const picsHTML = `
 `
 
 func allPics(w http.ResponseWriter, r *http.Request) {
-	u, err := login(w, r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	c := appengine.NewContext(r)
+	u := user.Current(c)
+	if u == nil {
+		url, err := user.LoginURL(c, r.URL.String())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Location", url)
+		w.WriteHeader(http.StatusFound)
 		return
 	}
-	c := appengine.NewContext(r)
 //	q := datastore.NewQuery("shortKey").Limit(10)
 	q := datastore.NewQuery("shortKey").Filter("Owner =", u.String())
 	longs := make([]shortToLong, 0, 10)
