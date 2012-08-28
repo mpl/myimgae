@@ -16,7 +16,7 @@ import (
 
 func init() {
 	http.HandleFunc("/", root)
-	http.HandleFunc("/login", login)
+	http.HandleFunc("/login", loginHandler)
 	http.HandleFunc("/logout", logout)
 	http.HandleFunc("/pic/", pic)
 	http.HandleFunc("/serve/", serve)
@@ -38,23 +38,30 @@ type Pic struct {
 	Date    time.Time
 }
 
-func login(w http.ResponseWriter, r *http.Request) {
+func loginHandler(w http.ResponseWriter, r *http.Request) {
+	_, err := login(w, r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if r.URL.String() == "/login" {
+		http.Redirect(w, r, "/", http.StatusFound)
+	}
+}
+
+func login(w http.ResponseWriter, r *http.Request) (*user.User, error) {
 //	println(r.URL.String())
 	c := appengine.NewContext(r)
 	u := user.Current(c)
 	if u == nil {
 		url, err := user.LoginURL(c, r.URL.String())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return nil, err
 		}
 		w.Header().Set("Location", url)
 		w.WriteHeader(http.StatusFound)
-		return
 	}
-	if r.URL.String() == "/login" {
-		http.Redirect(w, r, "/", http.StatusFound)
-	}
+	return u, nil
 }
 
 func logout(w http.ResponseWriter, r *http.Request) {
@@ -169,9 +176,12 @@ func pic(w http.ResponseWriter, r *http.Request) {
 }
 
 func upload(w http.ResponseWriter, r *http.Request) {
-	login(w, r)
+	u, err := login(w, r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	c := appengine.NewContext(r)
-	u := user.Current(c)
 	blobs, _, err := blobstore.ParseUpload(r)
 	if err != nil {
 		serveError(c, w, err)
@@ -218,9 +228,12 @@ const picsHTML = `
 `
 
 func allPics(w http.ResponseWriter, r *http.Request) {
-	login(w, r)
+	u, err := login(w, r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	c := appengine.NewContext(r)
-	u := user.Current(c)
 //	q := datastore.NewQuery("shortKey").Limit(10)
 	q := datastore.NewQuery("shortKey").Filter("Owner =", u.String())
 	longs := make([]shortToLong, 0, 10)
