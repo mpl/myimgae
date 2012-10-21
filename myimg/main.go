@@ -7,7 +7,6 @@ import (
 	"appengine/user"
 	"crypto/md5"
 	"fmt"
-	"html/template"
 	"io"
 	"net/http"
 	"path"
@@ -32,12 +31,12 @@ func serveError(c appengine.Context, w http.ResponseWriter, err error) {
 
 func isAnon(c appengine.Context) bool {
 	u := user.Current(c)
-	return (u == nil) 
+	return (u == nil)
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-//	c.Debugf(r.URL.Path)
+	//	c.Debugf(r.URL.Path)
 	u := user.Current(c)
 	if u == nil {
 		url, err := user.LoginURL(c, r.URL.String())
@@ -56,7 +55,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 
 func logout(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-//	c.Debugf(r.URL.Path)
+	//	c.Debugf(r.URL.Path)
 	u := user.Current(c)
 	if u != nil {
 		url, err := user.LogoutURL(c, r.URL.String())
@@ -73,31 +72,9 @@ func logout(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-var rootTemplate = template.Must(template.New("root").Parse(rootHTML))
-
-const rootHTML = `
-<!DOCTYPE html>
-<html>
-<head>
-	<title>ImgDump</title>
-</head>
-<body>
-	{{ if .Anon }}<div> Log in to upload or list your previous uploads </div>{{ end }}
-	<div> <a href="/">home</a> <a href="/login">login</a> <a href="/logout">logout</a> </div>
-	{{ if not .Anon }}
-	<div><a href="/pics">list</a></div>
-	<form action="{{.UploadURL}}" method="post" enctype="multipart/form-data">
-	<div><input type="file" name="file"></div>
-	<div><input type="submit" value="upload"></div>
-    </form>
-	{{ end }}
-</body>
-</html>
-`
-
 type serveRoot struct {
 	UploadURL string
-	Anon bool
+	Anon      bool
 }
 
 func root(w http.ResponseWriter, r *http.Request) {
@@ -118,38 +95,15 @@ func serve(w http.ResponseWriter, r *http.Request) {
 	blobstore.Send(w, appengine.BlobKey(r.FormValue("blobKey")))
 }
 
-var picTemplate = template.Must(template.New("pic").Parse(picHTML))
-
-const picHTML = `
-<!DOCTYPE html>
-<html>
-<head>
-	<title>ImgDump</title>
-</head>
-<body>
-	{{ if .Anon }}<div> Log in to upload or list your previous uploads </div>{{ end }}
-	<div> <a href="/">home</a> <a href="/login">login</a> <a href="/logout">logout</a> </div>
-	<div><img src="/serve/?blobKey={{.PicKey}}" alt="{{.PicKey}}"/></div>
-	{{ if not .Anon }}
-	<div><a href="/pics">list</a></div>
-	<form action="{{.Upload}}" method="post" enctype="multipart/form-data">
-	<div><input type="file" name="file"></div>
-	<div><input type="submit" value="upload"></div>
-    </form>
-	{{ end }}
-</body>
-</html>
-`
-
 type servePic struct {
 	Upload string
 	PicKey string
-	Anon bool
+	Anon   bool
 }
 
 type shortToLong struct {
 	Owner string
-	Hash string
+	Hash  string
 }
 
 func pic(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +144,7 @@ func upload(w http.ResponseWriter, r *http.Request) {
 	}
 	blobs, _, err := blobstore.ParseUpload(r)
 	if err != nil {
-//		serveError(c, w, err)
+		//		serveError(c, w, err)
 		c.Errorf("%v", err)
 		// TODO(mpl): probably not a "StatusFound" that we want here
 		http.Redirect(w, r, "/", http.StatusFound)
@@ -219,23 +173,6 @@ func upload(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/pic/"+short, http.StatusFound)
 }
 
-var picsTemplate = template.Must(template.New("pics").Parse(picsHTML))
-
-const picsHTML = `
-<!DOCTYPE html>
-<html>
-<head>
-	<title>ImgDump</title>
-</head>
-<body>
-	<div> <a href="/">home</a> <a href="/login">login</a> <a href="/logout">logout</a> </div>
-	<ul>
-	{{range .}} <li> <a href="pic/{{.}}"> {{.}} </li> {{end}}
-	</ul>
-</body>
-</html>
-`
-
 func allPics(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	u := user.Current(c)
@@ -249,7 +186,7 @@ func allPics(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusFound)
 		return
 	}
-//	q := datastore.NewQuery("shortKey").Limit(10)
+	//	q := datastore.NewQuery("shortKey").Limit(10)
 	q := datastore.NewQuery("shortKey").Filter("Owner =", u.String())
 	longs := make([]shortToLong, 0, 10)
 	keys, err := q.GetAll(c, &longs)
@@ -258,12 +195,11 @@ func allPics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	shorts := make([]string, 0, 1)
-	for _,v := range keys {
+	for _, v := range keys {
 		shorts = append(shorts, v.StringID())
 	}
-	
+
 	if err := picsTemplate.Execute(w, shorts); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-    }
+	}
 }
-
